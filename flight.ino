@@ -5,11 +5,24 @@
 #include <Adafruit_BMP085_U.h>
 #include <Adafruit_Simple_AHRS.h>
 
-#define PWM_THROTTLE_PIN 8
+
 #define PWM_ROLL_PIN     6
+#define PWM_ROLL_INDEX   0
+
 #define PWM_PITCH_PIN    7
+#define PWM_PITCH_INDEX  1
+
+#define PWM_THROTTLE_PIN    8
+#define PWM_THROTTLE_INDEX  2
+
 #define PWM_YAW_PIN      9
+#define PWM_YAW_INDEX    3
+
 #define PWM_MODE_PIN     10
+#define PWM_MODE_INDEX   4
+
+#define PWM_AUX_PIN     11
+#define PWM_AUX_INDEX   5
 
 #define FAILSAFE_TIMEOUT 100
 
@@ -61,78 +74,83 @@ class PIDController {
   
 };
 
-void pinChangeHandler();
 
-
-class PWMInput {
-  
-  uint8_t pinState = 0;
-  uint8_t pin;
-  unsigned long riseTime = 0;
-
-  void checkPin() {
-    uint8_t currentState = digitalRead(pin);
-    if (pinState != currentState) {
-      
-      if (currentState == 0) {
-        duty = micros() - riseTime;
-        //duty = ((duration -1000) * 256) / 1000;
-      } else {
-        riseTime = micros();
-      }
-      pinState = currentState;
-      lastupdate = millis();
-    } 
-  }
-  
-  public:
-  unsigned long lastupdate = 0;
-  uint16_t duty = 0;
-  
-  PWMInput(uint8_t pin) {
-    digitalWrite(pin,HIGH); 
-    *digitalPinToPCMSK(pin) |= bit (digitalPinToPCMSKbit(pin));  // enable pin
-    PCIFR  |= bit (digitalPinToPCICRbit(pin)); // clear any outstanding interrupt
-    PCICR  |= bit (digitalPinToPCICRbit(pin)); // enable interrupt for the group
-
-    this->pin = pin;
-    pinState = digitalRead(pin);
-  }
-  
-  void pinChange() {
-    checkPin();
-  }
-  
+struct PWMInputPin {
+  unsigned long riseTime;
+  uint16_t highTime;
 };
 
+PWMInputPin PWMPins[6] = {0};
 
+void setupPin(uint8_t pin) {
+  digitalWrite(pin,HIGH); 
+  *digitalPinToPCMSK(pin) |= bit (digitalPinToPCMSKbit(pin));  // enable pin
+  PCIFR  |= bit (digitalPinToPCICRbit(pin)); // clear any outstanding interrupt
+  PCICR  |= bit (digitalPinToPCICRbit(pin)); // enable interrupt for the group
+}
+
+// Pins 8 - 13
+uint8_t pinMaskHigh = B00001111;
+uint8_t previousStateHigh = 0;
 ISR (PCINT0_vect) {
-  pinChangeHandler();
+  uint8_t changed = (PINB & pinMaskHigh) ^ previousStateHigh;
+  previousStateHigh = PINB & pinMaskHigh;
+  if (changed & B00000001) { // Pin 8
+    if (PINB & B00000001) { // High
+      PWMPins[PWM_THROTTLE_INDEX].riseTime = micros();
+    } else { // Low
+      PWMPins[PWM_THROTTLE_INDEX].highTime = micros() - PWMPins[PWM_THROTTLE_INDEX].riseTime;
+    }
+  }
+  if (changed & B00000010) { // Pin 9
+    if (PINB & B00000010) { // High
+      PWMPins[PWM_YAW_INDEX].riseTime = micros();
+    } else { // Low
+      PWMPins[PWM_YAW_INDEX].highTime = micros() - PWMPins[PWM_YAW_INDEX].riseTime;
+    }
+  }
+  if (changed & B00000100) { // Pin 10
+    if (PINB & B00000100) { // High
+      PWMPins[PWM_MODE_INDEX].riseTime = micros();
+    } else { // Low
+      PWMPins[PWM_MODE_INDEX].highTime = micros() - PWMPins[PWM_MODE_INDEX].riseTime;
+    }
+  }
+  if (changed & B00001000) { // Pin 11
+    if (PINB & B00001000) { // High
+      PWMPins[PWM_AUX_INDEX].riseTime = micros();
+    } else { // Low
+      PWMPins[PWM_AUX_INDEX].highTime = micros() - PWMPins[PWM_AUX_INDEX].riseTime;
+    }
+  }
 }
 
-ISR (PCINT1_vect) {
-  pinChangeHandler();
-}
 
-
+// Pins 0 - 7
+uint8_t pinMaskLow = B11000000;
+uint8_t previousStateLow = 0;
 ISR (PCINT2_vect) {
-  pinChangeHandler();
+
+  uint8_t changed = (PIND & pinMaskLow) ^ previousStateLow;
+  previousStateLow = PIND & pinMaskLow;
+  
+  if (changed & B01000000) { // Pin 6
+    if (PIND & B01000000) { // High
+      PWMPins[PWM_ROLL_INDEX].riseTime = micros();
+    } else { // Low
+      PWMPins[PWM_ROLL_INDEX].highTime = micros() - PWMPins[PWM_ROLL_INDEX].riseTime;
+    }
+  }
+
+  if (changed & B10000000) { // Pin 7
+    if (PIND & B10000000) { // High
+      PWMPins[PWM_PITCH_PIN].riseTime = micros();
+    } else { // Low
+      PWMPins[PWM_PITCH_PIN].highTime = micros() - PWMPins[PWM_PITCH_PIN].riseTime;
+    }
+  }
 }
 
-
-PWMInput pwmYaw(PWM_YAW_PIN);
-PWMInput pwmRoll(PWM_ROLL_PIN);
-PWMInput pwmPitch(PWM_PITCH_PIN);
-PWMInput pwmThrottle(PWM_THROTTLE_PIN);
-PWMInput pwmMode(PWM_MODE_PIN);
-
-void pinChangeHandler() {
-  pwmYaw.pinChange();
-  pwmRoll.pinChange();
-  pwmPitch.pinChange();
-  pwmThrottle.pinChange();
-  pwmMode.pinChange();
-}
 
 Servo throttle;
 Servo rudder;
@@ -152,6 +170,14 @@ PIDController aileronPID = PIDController(2,0,0);
 void setup() {
 
   Serial.begin(115200);
+
+  Serial.println("Setting up PWM input");
+  setupPin(PWM_YAW_PIN);
+  setupPin(PWM_ROLL_PIN);
+  setupPin(PWM_PITCH_PIN);
+  setupPin(PWM_THROTTLE_PIN);
+  setupPin(PWM_MODE_PIN);
+  setupPin(PWM_AUX_PIN);
   
   Serial.println("Setting up sensors...");
   accel.begin();
@@ -170,20 +196,18 @@ uint16_t loop_count = 0;
 unsigned long log_time = 0;
 void loop() {
   
-
-  if(pwmPitch.lastupdate < (millis() - FAILSAFE_TIMEOUT) || pwmPitch.lastupdate < 1000) {
+  if((PWMPins[PWM_ROLL_INDEX].riseTime/1000) < (millis() - (FAILSAFE_TIMEOUT)) || (PWMPins[PWM_ROLL_INDEX].riseTime/1000)  < 1000) {
     mode = FAILSAFE;
   } else {
-    if (pwmMode.duty > 1600) {
+    if (PWMPins[PWM_MODE_INDEX].highTime  > 1600) {
       mode = STABILISED;
     } else {
       mode = MANUAL;
-    }
-    
+    } 
   }
-
+  
   sensors_vec_t   orientation;
-  if (ahrs.getOrientation(&orientation) && false)
+  if (ahrs.getOrientation(&orientation))
   {
     planeState.roll = (1-IMU_MERGE_FACTOR)*planeState.roll + IMU_MERGE_FACTOR*orientation.roll;
     planeState.pitch = (1-IMU_MERGE_FACTOR)*planeState.pitch  + IMU_MERGE_FACTOR*orientation.pitch;
@@ -193,27 +217,32 @@ void loop() {
   elevatorPID.update(planeState.pitch, targetState.pitch);
   aileronPID.update(planeState.roll, targetState.roll);
 
+
   switch (mode) {
     case(FAILSAFE):
       digitalWrite(13,HIGH); 
+      
       throttle.writeMicroseconds(1000);
       aileron.writeMicroseconds(1500);
       rudder.writeMicroseconds(1500);
       elevator.writeMicroseconds(1500);
+      
       break;
     case(MANUAL):
-      digitalWrite(13,LOW); 
-      throttle.writeMicroseconds(pwmThrottle.duty);
-      aileron.writeMicroseconds(pwmRoll.duty);
-      rudder.writeMicroseconds(pwmYaw.duty);
-      elevator.writeMicroseconds(pwmPitch.duty);
+      digitalWrite(13,LOW);
+      //unsigned long start = millis();
+      throttle.writeMicroseconds(PWMPins[PWM_THROTTLE_INDEX].highTime);
+      aileron.writeMicroseconds(PWMPins[PWM_ROLL_INDEX].highTime);
+      rudder.writeMicroseconds(PWMPins[PWM_YAW_INDEX].highTime);
+      elevator.writeMicroseconds(PWMPins[PWM_PITCH_INDEX].highTime);
+      //Serial.println(millis() - start);
       break;
     case(STABILISED):
       digitalWrite(13,LOW);
       
-      throttle.writeMicroseconds(pwmThrottle.duty);
+      throttle.writeMicroseconds(PWMPins[PWM_THROTTLE_INDEX].highTime);
       aileron.write(90 + aileronPID.output);
-      rudder.writeMicroseconds(pwmYaw.duty);
+      rudder.writeMicroseconds(PWMPins[PWM_YAW_INDEX].highTime);
       elevator.write(90 + elevatorPID.output);
       break;
   }
@@ -225,13 +254,13 @@ void loop() {
     
 
     Serial.print("Elevator:");
-    Serial.print(pwmPitch.duty);
+    Serial.print(PWMPins[PWM_PITCH_INDEX].highTime);
     Serial.print("    Aileron:");
-    Serial.print(pwmRoll.duty);
+    Serial.print(PWMPins[PWM_ROLL_INDEX].highTime);
     Serial.print("    Throttle:");
-    Serial.print(pwmThrottle.duty);
+    Serial.print(PWMPins[PWM_THROTTLE_INDEX].highTime);
     Serial.print("    Rudder:");
-    Serial.print(pwmYaw.duty);
+    Serial.print(PWMPins[PWM_YAW_INDEX].highTime);
     Serial.print("    MODE:");
     switch (mode) {
       case(FAILSAFE):
@@ -248,7 +277,7 @@ void loop() {
         break;
     }
     Serial.print(" - ");
-    Serial.println(millis() - pwmPitch.lastupdate);
+    Serial.println(millis() - PWMPins[PWM_PITCH_INDEX].riseTime);
     
     Serial.print(F("Roll: "));
     Serial.print(planeState.roll);
@@ -262,4 +291,5 @@ void loop() {
   }
 
   loop_count++;
+  delay(10);
 }
