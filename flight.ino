@@ -144,9 +144,9 @@ ISR (PCINT2_vect) {
 
   if (changed & B10000000) { // Pin 7
     if (PIND & B10000000) { // High
-      PWMPins[PWM_PITCH_PIN].riseTime = micros();
+      PWMPins[PWM_PITCH_INDEX].riseTime = micros();
     } else { // Low
-      PWMPins[PWM_PITCH_PIN].highTime = micros() - PWMPins[PWM_PITCH_PIN].riseTime;
+      PWMPins[PWM_PITCH_INDEX].highTime = micros() - PWMPins[PWM_PITCH_INDEX].riseTime;
     }
   }
 }
@@ -185,10 +185,10 @@ void setup() {
   bmp.begin();
   
   Serial.println("Setting up servos...");
-  throttle.attach(15);
-  aileron.attach(17);
   rudder.attach(14);
+  throttle.attach(15);
   elevator.attach(16);
+  aileron.attach(17);
   Serial.println("READY");
 }
 
@@ -291,5 +291,4 @@ void loop() {
   }
 
   loop_count++;
-  delay(10);
 }
