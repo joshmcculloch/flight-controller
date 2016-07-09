@@ -83,6 +83,14 @@ class PIDController {
     this->last_time = millis();
     this->iRange = i > 0 ? 30/i : 1;
   }
+
+  PIDController(float p, float i, float d, float iRange) {
+    this->p = p;
+    this->i = i;
+    this->d = d;
+    this->last_time = millis();
+    this->iRange = i > 0 ? iRange/i : 1;
+  }
   void update(float current, float target) {
     float error = current - target;
     float delta = (float)(millis()-last_time) / 1000;
@@ -103,7 +111,7 @@ class PIDController {
 
 PIDController elevatorPID = PIDController(2,0,0);
 PIDController aileronPID = PIDController(2,0,0);
-PIDController altitudePID = PIDController(1,0.1,0);
+PIDController altitudePID = PIDController(1,0.1,0,10);
 
 struct PWMInputPin {
   unsigned long riseTime;
@@ -181,6 +189,11 @@ ISR (PCINT2_vect) {
   }
 }
 
+float mapf(long x, long in_min, long in_max, long out_min, long out_max)
+{
+ return (float)(x - in_min) * (out_max - out_min) / (float)(in_max - in_min) + out_min;
+}
+
 float getAirPressure(uint16_t samples) {
   float pressure = 0;
   sensors_event_t bmp_event;
@@ -239,6 +252,8 @@ void loop() {
           targetState.pitch = 0;
         }
         mode = STABILISED;
+        float delta_target_altitude = mapf(PWMPins[PWM_PITCH_INDEX].highTime, 1000, 2000, -2,2) / MODE_UPDATE_RATE; 
+        targetState.altitude += delta_target_altitude;
       } else {
         mode = MANUAL;
       } 
