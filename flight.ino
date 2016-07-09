@@ -28,6 +28,18 @@
 
 #define IMU_MERGE_FACTOR 0.1
 
+#define IMU_UPDATE_RATE 100
+#define PID_UPDATE_RATE 100
+#define SERVO_UPDATE_RATE 100
+#define SERIAL_UPDATE_RATE 1
+#define MODE_UPDATE_RATE 100
+
+unsigned long int next_imu_update = 0;
+unsigned long int next_pid_update = 0;
+unsigned long int next_servo_update = 0;
+unsigned long int next_serial_update = 0;
+unsigned long int next_mode_update = 0;
+
 struct PlaneState {
   float roll;
   float pitch;
@@ -195,63 +207,71 @@ void setup() {
 uint16_t loop_count = 0;
 unsigned long log_time = 0;
 void loop() {
-  
-  if((PWMPins[PWM_ROLL_INDEX].riseTime/1000) < (millis() - (FAILSAFE_TIMEOUT)) || (PWMPins[PWM_ROLL_INDEX].riseTime/1000)  < 1000) {
-    mode = FAILSAFE;
-  } else {
-    if (PWMPins[PWM_MODE_INDEX].highTime  > 1600) {
-      mode = STABILISED;
+
+  if (next_mode_update < millis()) {
+    next_mode_update += 1000/MODE_UPDATE_RATE;
+    if((PWMPins[PWM_ROLL_INDEX].riseTime/1000) < (millis() - (FAILSAFE_TIMEOUT)) || (PWMPins[PWM_ROLL_INDEX].riseTime/1000)  < 1000) {
+      mode = FAILSAFE;
     } else {
-      mode = MANUAL;
-    } 
-  }
-  
-  sensors_vec_t   orientation;
-  if (ahrs.getOrientation(&orientation))
-  {
-    planeState.roll = (1-IMU_MERGE_FACTOR)*planeState.roll + IMU_MERGE_FACTOR*orientation.roll;
-    planeState.pitch = (1-IMU_MERGE_FACTOR)*planeState.pitch  + IMU_MERGE_FACTOR*orientation.pitch;
-    planeState.heading = (1-IMU_MERGE_FACTOR)*planeState.heading + IMU_MERGE_FACTOR*orientation.heading;
+      if (PWMPins[PWM_MODE_INDEX].highTime  > 1600) {
+        mode = STABILISED;
+      } else {
+        mode = MANUAL;
+      } 
+    }
   }
 
-  elevatorPID.update(planeState.pitch, targetState.pitch);
-  aileronPID.update(planeState.roll, targetState.roll);
-
-
-  switch (mode) {
-    case(FAILSAFE):
-      digitalWrite(13,HIGH); 
-      
-      throttle.writeMicroseconds(1000);
-      aileron.writeMicroseconds(1500);
-      rudder.writeMicroseconds(1500);
-      elevator.writeMicroseconds(1500);
-      
-      break;
-    case(MANUAL):
-      digitalWrite(13,LOW);
-      //unsigned long start = millis();
-      throttle.writeMicroseconds(PWMPins[PWM_THROTTLE_INDEX].highTime);
-      aileron.writeMicroseconds(PWMPins[PWM_ROLL_INDEX].highTime);
-      rudder.writeMicroseconds(PWMPins[PWM_YAW_INDEX].highTime);
-      elevator.writeMicroseconds(PWMPins[PWM_PITCH_INDEX].highTime);
-      //Serial.println(millis() - start);
-      break;
-    case(STABILISED):
-      digitalWrite(13,LOW);
-      
-      throttle.writeMicroseconds(PWMPins[PWM_THROTTLE_INDEX].highTime);
-      aileron.write(90 + aileronPID.output);
-      rudder.writeMicroseconds(PWMPins[PWM_YAW_INDEX].highTime);
-      elevator.write(90 + elevatorPID.output);
-      break;
+  if (next_imu_update < millis()) {
+    next_imu_update += 1000/IMU_UPDATE_RATE;
+    sensors_vec_t   orientation;
+    if (ahrs.getOrientation(&orientation))
+    {
+      planeState.roll = (1-IMU_MERGE_FACTOR)*planeState.roll + IMU_MERGE_FACTOR*orientation.roll;
+      planeState.pitch = (1-IMU_MERGE_FACTOR)*planeState.pitch  + IMU_MERGE_FACTOR*orientation.pitch;
+      planeState.heading = (1-IMU_MERGE_FACTOR)*planeState.heading + IMU_MERGE_FACTOR*orientation.heading;
+    }
   }
 
-  if (log_time < millis()) {
-    Serial.print(" ");
-    Serial.println(loop_count);
-    loop_count = 0;
-    
+  if (next_pid_update < millis()) {
+    next_pid_update += 1000/PID_UPDATE_RATE;
+    elevatorPID.update(planeState.pitch, targetState.pitch);
+    aileronPID.update(planeState.roll, targetState.roll);
+  }
+
+  if (next_servo_update < millis()) {
+    next_servo_update += 1000/SERVO_UPDATE_RATE;
+    switch (mode) {
+      case(FAILSAFE):
+        digitalWrite(13,HIGH); 
+        
+        throttle.writeMicroseconds(1000);
+        aileron.writeMicroseconds(1500);
+        rudder.writeMicroseconds(1500);
+        elevator.writeMicroseconds(1500);
+        
+        break;
+      case(MANUAL):
+        digitalWrite(13,LOW);
+        //unsigned long start = millis();
+        throttle.writeMicroseconds(PWMPins[PWM_THROTTLE_INDEX].highTime);
+        aileron.writeMicroseconds(PWMPins[PWM_ROLL_INDEX].highTime);
+        rudder.writeMicroseconds(PWMPins[PWM_YAW_INDEX].highTime);
+        elevator.writeMicroseconds(PWMPins[PWM_PITCH_INDEX].highTime);
+        //Serial.println(millis() - start);
+        break;
+      case(STABILISED):
+        digitalWrite(13,LOW);
+        
+        throttle.writeMicroseconds(PWMPins[PWM_THROTTLE_INDEX].highTime);
+        aileron.write(90 + aileronPID.output);
+        rudder.writeMicroseconds(PWMPins[PWM_YAW_INDEX].highTime);
+        elevator.write(90 + elevatorPID.output);
+        break;
+    }
+  }
+
+  if (next_serial_update < millis()) {
+    next_serial_update += 1000/SERIAL_UPDATE_RATE;  
 
     Serial.print("Elevator:");
     Serial.print(PWMPins[PWM_PITCH_INDEX].highTime);
@@ -264,20 +284,18 @@ void loop() {
     Serial.print("    MODE:");
     switch (mode) {
       case(FAILSAFE):
-        Serial.print(" FAILSAFE");
+        Serial.println(" FAILSAFE");
         break;
       case(MANUAL):
-        Serial.print(" MANUAL");
+        Serial.println(" MANUAL");
         break;
       case(STABILISED):
-        Serial.print(" STABILISED");
+        Serial.println(" STABILISED");
         break;
       case(AUTO):
-        Serial.print(" AUTO");
+        Serial.println(" AUTO");
         break;
     }
-    Serial.print(" - ");
-    Serial.println(millis() - PWMPins[PWM_PITCH_INDEX].riseTime);
     
     Serial.print(F("Roll: "));
     Serial.print(planeState.roll);
@@ -286,9 +304,5 @@ void loop() {
     Serial.print(F(" Heading: "));
     Serial.print(planeState.heading);
     Serial.println(F(""));
-    
-    log_time = millis() + 1000;
   }
-
-  loop_count++;
 }
