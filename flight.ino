@@ -31,7 +31,7 @@
 #define IMU_UPDATE_RATE 100
 #define PID_UPDATE_RATE 100
 #define SERVO_UPDATE_RATE 100
-#define SERIAL_UPDATE_RATE 1
+#define SERIAL_UPDATE_RATE 3
 #define MODE_UPDATE_RATE 100
 
 unsigned long int next_imu_update = 0;
@@ -61,7 +61,7 @@ struct PlaneState {
 };
 
 PlaneState planeState = {0,0,0,0};
-PlaneState targetState = {0,0,0,10};
+PlaneState targetState = {0,0,0,0};
 
 enum Mode{FAILSAFE, MANUAL, STABILISED, AUTO};
 Mode mode = FAILSAFE;
@@ -103,6 +103,7 @@ class PIDController {
 
 PIDController elevatorPID = PIDController(2,0,0);
 PIDController aileronPID = PIDController(2,0,0);
+PIDController altitudePID = PIDController(1,0.1,0);
 
 struct PWMInputPin {
   unsigned long riseTime;
@@ -233,6 +234,10 @@ void loop() {
       mode = FAILSAFE;
     } else {
       if (PWMPins[PWM_MODE_INDEX].highTime  > 1600) {
+        if (mode != STABILISED) {
+          targetState.altitude = planeState.altitude;
+          targetState.pitch = 0;
+        }
         mode = STABILISED;
       } else {
         mode = MANUAL;
@@ -262,8 +267,12 @@ void loop() {
 
   if (next_pid_update < millis()) {
     next_pid_update += 1000/PID_UPDATE_RATE;
-    elevatorPID.update(planeState.pitch, targetState.pitch);
-    aileronPID.update(planeState.roll, targetState.roll);
+    if( mode == STABILISED) {
+      elevatorPID.update(planeState.pitch, targetState.pitch);
+      aileronPID.update(planeState.roll, targetState.roll);
+      altitudePID.update(planeState.altitude, targetState.altitude);
+      targetState.pitch = altitudePID.output;
+    }
   }
 
   if (next_servo_update < millis()) {
@@ -300,7 +309,7 @@ void loop() {
 
   if (next_serial_update < millis()) {
     next_serial_update += 1000/SERIAL_UPDATE_RATE;  
-
+    Serial.println("");
     Serial.print("Elevator:");
     Serial.print(PWMPins[PWM_PITCH_INDEX].highTime);
     Serial.print("    Aileron:");
@@ -325,7 +334,7 @@ void loop() {
         break;
     }
     
-    Serial.print(F("Roll: "));
+    Serial.print(F("Current Roll: "));
     Serial.print(planeState.roll);
     Serial.print(F(" Pitch: "));
     Serial.print(planeState.pitch);
@@ -333,6 +342,16 @@ void loop() {
     Serial.print(planeState.heading);
     Serial.print(F(" Altitude: "));
     Serial.print(planeState.altitude);
+    Serial.println(F(""));
+
+    Serial.print(F("Target Roll: "));
+    Serial.print(targetState.roll);
+    Serial.print(F(" Pitch: "));
+    Serial.print(targetState.pitch);
+    Serial.print(F(" Heading: "));
+    Serial.print(targetState.heading);
+    Serial.print(F(" Altitude: "));
+    Serial.print(targetState.altitude);
     Serial.println(F(""));
   }
 }
