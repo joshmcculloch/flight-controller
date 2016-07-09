@@ -26,7 +26,7 @@
 
 #define FAILSAFE_TIMEOUT 100
 
-#define IMU_MERGE_FACTOR 0.1
+#define IMU_MERGE_FACTOR 0.3
 
 #define IMU_UPDATE_RATE 100
 #define PID_UPDATE_RATE 100
@@ -40,14 +40,28 @@ unsigned long int next_servo_update = 0;
 unsigned long int next_serial_update = 0;
 unsigned long int next_mode_update = 0;
 
+Servo throttle;
+Servo rudder;
+Servo elevator;
+Servo aileron;
+
+Adafruit_LSM303_Accel_Unified accel(30301);
+Adafruit_LSM303_Mag_Unified   mag(30302);
+Adafruit_BMP085_Unified       bmp(18001);
+
+Adafruit_Simple_AHRS          ahrs(&accel, &mag);
+float seaLevelPressure;
+
+
 struct PlaneState {
   float roll;
   float pitch;
   float heading;
+  float altitude;
 };
 
-PlaneState planeState = {0,0,0};
-PlaneState targetState = {0,0,0};
+PlaneState planeState = {0,0,0,0};
+PlaneState targetState = {0,0,0,10};
 
 enum Mode{FAILSAFE, MANUAL, STABILISED, AUTO};
 Mode mode = FAILSAFE;
@@ -86,6 +100,9 @@ class PIDController {
   
 };
 
+
+PIDController elevatorPID = PIDController(2,0,0);
+PIDController aileronPID = PIDController(2,0,0);
 
 struct PWMInputPin {
   unsigned long riseTime;
@@ -163,21 +180,20 @@ ISR (PCINT2_vect) {
   }
 }
 
-
-Servo throttle;
-Servo rudder;
-Servo elevator;
-Servo aileron;
-
-Adafruit_LSM303_Accel_Unified accel(30301);
-Adafruit_LSM303_Mag_Unified   mag(30302);
-Adafruit_BMP085_Unified       bmp(18001);
-
-Adafruit_Simple_AHRS          ahrs(&accel, &mag);
-float seaLevelPressure = SENSORS_PRESSURE_SEALEVELHPA;
-
-PIDController elevatorPID = PIDController(2,0,0);
-PIDController aileronPID = PIDController(2,0,0);
+float getAirPressure(uint16_t samples) {
+  float pressure = 0;
+  sensors_event_t bmp_event;
+  uint16_t i=0;
+  while(i<samples){
+    bmp.getEvent(&bmp_event);
+    if (bmp_event.pressure)
+    {
+      i++;
+      pressure += bmp_event.pressure;
+    }
+  }
+  return pressure / samples;
+}
 
 void setup() {
 
@@ -201,6 +217,9 @@ void setup() {
   throttle.attach(15);
   elevator.attach(16);
   aileron.attach(17);
+
+  Serial.println("Sampling air pressure");
+  seaLevelPressure = getAirPressure(100);
   Serial.println("READY");
 }
 
@@ -229,6 +248,15 @@ void loop() {
       planeState.roll = (1-IMU_MERGE_FACTOR)*planeState.roll + IMU_MERGE_FACTOR*orientation.roll;
       planeState.pitch = (1-IMU_MERGE_FACTOR)*planeState.pitch  + IMU_MERGE_FACTOR*orientation.pitch;
       planeState.heading = (1-IMU_MERGE_FACTOR)*planeState.heading + IMU_MERGE_FACTOR*orientation.heading;
+    }
+    sensors_event_t bmp_event;
+    bmp.getEvent(&bmp_event);
+    if (bmp_event.pressure)
+    {
+      float temperature;
+      bmp.getTemperature(&temperature);
+      planeState.altitude = (1-IMU_MERGE_FACTOR)*planeState.altitude +
+        IMU_MERGE_FACTOR*bmp.pressureToAltitude(seaLevelPressure, bmp_event.pressure, temperature);
     }
   }
 
@@ -303,6 +331,8 @@ void loop() {
     Serial.print(planeState.pitch);
     Serial.print(F(" Heading: "));
     Serial.print(planeState.heading);
+    Serial.print(F(" Altitude: "));
+    Serial.print(planeState.altitude);
     Serial.println(F(""));
   }
 }
