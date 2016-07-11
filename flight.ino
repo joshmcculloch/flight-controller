@@ -114,8 +114,9 @@ PIDController aileronPID = PIDController(2,0,0);
 PIDController altitudePID = PIDController(1,0.1,0,10);
 
 struct PWMInputPin {
-  unsigned long riseTime;
-  uint16_t highTime;
+  volatile unsigned long riseTime;
+  volatile uint16_t highTime;
+  volatile uint16_t centerOffset;
 };
 
 PWMInputPin PWMPins[6] = {0};
@@ -232,8 +233,16 @@ void setup() {
   elevator.attach(16);
   aileron.attach(17);
 
-  Serial.println("Sampling air pressure");
+  Serial.println("Sampling air pressure...");
   seaLevelPressure = getAirPressure(100);
+
+  Serial.println("Waiting for controller...");
+  while ((PWMPins[PWM_PITCH_INDEX].riseTime + PWMPins[PWM_ROLL_INDEX].riseTime) == 0) {continue;}
+  Serial.println("Calculating center offsets...");
+  while (PWMPins[PWM_PITCH_INDEX].highTime == 0 || PWMPins[PWM_ROLL_INDEX].highTime  == 0 || PWMPins[PWM_ROLL_INDEX].highTime == 0) {continue;}
+  PWMPins[PWM_PITCH_INDEX].centerOffset = 1500 -PWMPins[PWM_PITCH_INDEX].highTime;
+  PWMPins[PWM_ROLL_INDEX].centerOffset = 1500 -PWMPins[PWM_ROLL_INDEX].highTime;
+  PWMPins[PWM_YAW_INDEX].centerOffset = 1500 -PWMPins[PWM_YAW_INDEX].highTime;
   Serial.println("READY");
 }
 
@@ -252,7 +261,8 @@ void loop() {
           targetState.pitch = 0;
         }
         mode = STABILISED;
-        float delta_target_altitude = mapf(PWMPins[PWM_PITCH_INDEX].highTime, 1000, 2000, -2,2) / MODE_UPDATE_RATE; 
+        float delta_target_altitude = mapf(PWMPins[PWM_PITCH_INDEX].highTime + PWMPins[PWM_PITCH_INDEX].centerOffset, 
+          1000, 2000, -2,2) / MODE_UPDATE_RATE; 
         targetState.altitude += delta_target_altitude;
       } else {
         mode = MANUAL;
